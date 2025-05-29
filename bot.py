@@ -303,11 +303,11 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     try:
-        asyncio.run(main())
+        asyncio.get_event_loop().run_until_complete(main())
     except RuntimeError:
         import nest_asyncio
         nest_asyncio.apply()
-        asyncio.run(main())
+        asyncio.get_event_loop().run_until_complete(main())
 
 # if __name__ == "__main__":
 #     import asyncio
