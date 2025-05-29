@@ -24,7 +24,7 @@ def save_alerts(data):
         json.dump(data, f, indent=2)
 
 # Your Telegram bot token
-BOT_TOKEN = "7940128805:AAH7_PuDdu9gPrqbzFnQMrI8AhYSBk8Nx9Y"
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Allowed users
 ALLOWED_USERS = {5817239686, 5274796002}
