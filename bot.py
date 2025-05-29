@@ -13,7 +13,6 @@ from telegram.ext import (
 # File to store alerts
 ALERT_FILE = 'prices.json'
 
-
 def load_alerts():
     if os.path.exists(ALERT_FILE):
         with open(ALERT_FILE, 'r') as f:
@@ -24,17 +23,13 @@ def save_alerts(data):
     with open(ALERT_FILE, 'w') as f:
         json.dump(data, f, indent=2)
 
-# Telegram Bot Token
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-#BOT_TOKEN
-
-if not BOT_TOKEN:
-    print("❌ Error: TELEGRAM_BOT_TOKEN environment variable not set.")
-    exit(1)
+# Your Telegram bot token
+BOT_TOKEN = "7940128805:AAH7_PuDdu9gPrqbzFnQMrI8AhYSBk8Nx9Y"
 
 # Allowed users
 ALLOWED_USERS = {5817239686, 5274796002}
 
+# Symbol to CoinGecko ID map
 SYMBOL_MAP = {
     "btc": "bitcoin",
     "eth": "ethereum",
@@ -73,7 +68,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     "<b><i>/start</i></b> - Start the bot and register yourself\n"
     "<b><i>/add COIN PRICE [above|below]</i></b> - Set a price alert\n"
     "<b><i>/list</i></b> - Show your active alerts\n"
-    "<b><i>/remove ALERT_NUMBER</i></b>  - Remove an alert\n"
+    "<b><i>/remove</i></b> ALERT_NUMBER - Remove an alert\n"
     "<b><i>/coin</i></b> - Show available coins for price alerts or to check their current prices\n"
     "<b><i>/price COIN [COIN2 COIN3...]</i></b> - Check current price(s)\n"
     "<b><i>/help</i></b> - Show this help message\n",
@@ -161,7 +156,6 @@ async def list_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"{idx}. {alert['symbol'].upper()} {alert['direction']} ${alert['price']}\n"
 
     await update.message.reply_text(message)
-    
 
 # /remove command
 async def remove_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -283,16 +277,17 @@ async def check_prices(context: ContextTypes.DEFAULT_TYPE):
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Invalid command.\nType <b><i>/help</i></b> - to see all available commands.\n", parse_mode="HTML")
 
+# Main function
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("coin", coin_command))
     app.add_handler(CommandHandler("add", add_alert))
     app.add_handler(CommandHandler("list", list_alerts))
     app.add_handler(CommandHandler("remove", remove_alert))
-    app.add_handler(CommandHandler("price", get_price))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("coin", coin_command))
+    app.add_handler(CommandHandler("price", get_price))  # ✅ Register price command
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
     app.job_queue.run_repeating(check_prices, interval=15, first=5)
@@ -303,17 +298,8 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     try:
-        asyncio.run(main())
+        asyncio.get_event_loop().run_until_complete(main())
     except RuntimeError:
         import nest_asyncio
         nest_asyncio.apply()
-        asyncio.run(main())
-
-# if __name__ == "__main__":
-#     import asyncio
-#     try:
-#         asyncio.get_event_loop().run_until_complete(main())
-#     except RuntimeError:
-#         import nest_asyncio
-#         nest_asyncio.apply()
-#         asyncio.get_event_loop().run_until_complete(main())
+        asyncio.get_event_loop().run_until_complete(main())
