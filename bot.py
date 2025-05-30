@@ -2,6 +2,7 @@ import json
 import os
 import requests
 import asyncio
+import nest_asyncio
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from telegram import Update
@@ -30,14 +31,14 @@ def save_alerts(data):
     with open(ALERT_FILE, 'w') as f:
         json.dump(data, f, indent=2)
 
-# Your Telegram bot token and Railway ping URL
+# Your Telegram bot token and ping URL
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-PING_URL = os.getenv("PING_URL")  # e.g., "https://your-app-name.up.railway.app"
+PING_URL = os.getenv("PING_URL")  # Example: "https://your-app-url.onrailway.app"
 
-# Allowed users (Telegram User IDs)
+# Allowed users
 ALLOWED_USERS = {5817239686, 5274796002}
 
-# Supported coin symbol → CoinGecko ID
+# Symbol to CoinGecko ID map
 SYMBOL_MAP = {
     "btc": "bitcoin",
     "eth": "ethereum",
@@ -51,7 +52,7 @@ SYMBOL_MAP = {
     "degen": "degen-base",
 }
 
-# === BOT COMMANDS ===
+# Commands
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -262,9 +263,9 @@ def run_ping_server():
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Unknown command. Use /help for help.")
 
-# ========== MAIN ==========
+# Main function
 async def main():
-    run_ping_server()
+    run_ping_server()  # Start the ping server in a separate thread
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -282,10 +283,11 @@ async def main():
     print("🤖 Bot is running...")
     await app.run_polling()
 
-async def main():
-    # ... setup bot ...
-    await app.run_polling()
-
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    import asyncio
+    try:
+        asyncio.run(main())
+    except RuntimeError:
+        import nest_asyncio
+        nest_asyncio.apply()
+        asyncio.run(main())
