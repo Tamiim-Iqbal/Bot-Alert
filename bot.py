@@ -2,7 +2,6 @@ import json
 import os
 import requests
 import asyncio
-import nest_asyncio
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from telegram import Update
@@ -283,13 +282,10 @@ async def main():
     print("🤖 Bot is running...")
     await app.run_polling()
 
+async def main():
+    # ... setup bot ...
+    await app.run_polling()
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "event loop is already running" in str(e):
-            nest_asyncio.apply()
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(main())
-        else:
-            raise
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
