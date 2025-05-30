@@ -49,17 +49,14 @@ def save_alerts(data):
     except Exception as e:
         logger.error(f"Error saving alerts: {e}")
 
-# Your Telegram bot token and Railway ping URL
+# Configuration
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
 
-PING_URL = os.getenv("PING_URL")  # e.g., "https://your-app-name.up.railway.app"
-
-# Allowed users (Telegram User IDs)
+PING_URL = os.getenv("PING_URL")
 ALLOWED_USERS = {5817239686, 5274796002}
 
-# Supported coin symbol → CoinGecko ID
 SYMBOL_MAP = {
     "btc": "bitcoin",
     "eth": "ethereum",
@@ -73,8 +70,214 @@ SYMBOL_MAP = {
     "degen": "degen-base",
 }
 
+# ===== COMMAND HANDLERS =====
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ Sorry, you are not authorized to use this bot.")
+        return
+    
+    await update.message.reply_text(
+        "👋 Welcome to Crypto Alert Bot!\n\n"
+        "Use /add COIN PRICE [above|below] to set price alerts.\n"
+        "Example: /add btc 50000 below\n\n"
+        "Use /help for all commands."
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ALLOWED_USERS:
+        return
+    
+    help_text = """
+📌 Available Commands:
+/start - Start the bot
+/help - Show this help
+/add COIN PRICE [above|below] - Set price alert
+/list - List your alerts
+/remove INDEX - Remove an alert
+/price COIN - Check current price
+Example: /price btc
+"""
+    await update.message.reply_text(help_text)
+
+async def add_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /add COIN PRICE [above|below]")
+        return
+
+    symbol = context.args[0].lower()
+    if symbol not in SYMBOL_MAP:
+        await update.message.reply_text(f"❌ Unknown coin: {symbol}")
+        return
+
+    try:
+        price = float(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid price format")
+        return
+
+    direction = "above"
+    if len(context.args) > 2 and context.args[2].lower() == "below":
+        direction = "below"
+
+    alerts = load_alerts()
+    user_alerts = alerts.get(str(user_id), [])
+    user_alerts.append({
+        "coin": SYMBOL_MAP[symbol],
+        "symbol": symbol,
+        "price": price,
+        "direction": direction
+    })
+    alerts[str(user_id)] = user_alerts
+    save_alerts(alerts)
+
+    await update.message.reply_text(
+        f"✅ Alert set for {symbol.upper()} ${price} ({direction})"
+    )
+
+async def list_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        return
+
+    alerts = load_alerts().get(str(user_id), [])
+    if not alerts:
+        await update.message.reply_text("You have no active alerts.")
+        return
+
+    message = "📋 Your alerts:\n"
+    for i, alert in enumerate(alerts, 1):
+        message += f"{i}. {alert['symbol'].upper()} {alert['direction']} ${alert['price']}\n"
+    
+    await update.message.reply_text(message)
+
+async def remove_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Usage: /remove INDEX")
+        return
+
+    index = int(context.args[0]) - 1
+    alerts = load_alerts()
+    user_alerts = alerts.get(str(user_id), [])
+
+    if index < 0 or index >= len(user_alerts):
+        await update.message.reply_text("❌ Invalid alert index")
+        return
+
+    removed = user_alerts.pop(index)
+    if user_alerts:
+        alerts[str(user_id)] = user_alerts
+    else:
+        alerts.pop(str(user_id))
+    save_alerts(alerts)
+
+    await update.message.reply_text(
+        f"✅ Removed alert for {removed['symbol'].upper()} ${removed['price']}"
+    )
+
+async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /price COIN")
+        return
+
+    symbol = context.args[0].lower()
+    if symbol not in SYMBOL_MAP:
+        await update.message.reply_text(f"❌ Unknown coin: {symbol}")
+        return
+
+    try:
+        response = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": SYMBOL_MAP[symbol], "vs_currencies": "usd"},
+            timeout=10
+        )
+        response.raise_for_status()
+        price = response.json()[SYMBOL_MAP[symbol]]["usd"]
+        await update.message.reply_text(f"💰 {symbol.upper()}: ${price:,.4f}")
+    except Exception as e:
+        logger.error(f"Price check failed: {e}")
+        await update.message.reply_text("❌ Failed to fetch price")
+
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Unknown command. Use /help for available commands.")
+
+# ===== PRICE CHECKING JOB =====
+
+async def check_prices(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        alerts = load_alerts()
+        if not alerts:
+            return
+
+        # Get unique coins to check
+        coins = list({alert['coin'] for user_alerts in alerts.values() for alert in user_alerts})
+        
+        # Fetch current prices
+        response = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": ",".join(coins), "vs_currencies": "usd"},
+            timeout=15
+        )
+        response.raise_for_status()
+        prices = response.json()
+
+        # Check alerts
+        for user_id, user_alerts in list(alerts.items()):
+            to_remove = []
+            for i, alert in enumerate(user_alerts):
+                current_price = prices.get(alert["coin"], {}).get("usd")
+                if current_price is None:
+                    continue
+
+                triggered = False
+                if alert["direction"] == "above" and current_price >= alert["price"]:
+                    triggered = True
+                elif alert["direction"] == "below" and current_price <= alert["price"]:
+                    triggered = True
+
+                if triggered:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=int(user_id),
+                            text=f"🚨 {alert['symbol'].upper()} is now ${current_price:,.4f} ({alert['direction']} ${alert['price']})"
+                        )
+                        to_remove.append(i)
+                    except Exception as e:
+                        logger.error(f"Failed to send alert: {e}")
+
+            # Remove triggered alerts
+            for i in sorted(to_remove, reverse=True):
+                user_alerts.pop(i)
+
+            # Update alerts
+            if user_alerts:
+                alerts[str(user_id)] = user_alerts
+            else:
+                alerts.pop(str(user_id))
+
+        save_alerts(alerts)
+
+    except Exception as e:
+        logger.error(f"Price check job failed: {e}")
+
+# ===== SERVER & PING =====
+
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Pong")
+
 def find_available_port(start_port=10001, max_attempts=20):
-    """Find an available port starting from start_port"""
     for port in range(start_port, start_port + max_attempts):
         try:
             with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
@@ -84,124 +287,49 @@ def find_available_port(start_port=10001, max_attempts=20):
             continue
     raise RuntimeError(f"No available ports found between {start_port}-{start_port + max_attempts - 1}")
 
-# [All your existing command functions remain unchanged...]
-
-async def check_prices(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        alerts = load_alerts()
-        if not alerts:
-            logger.debug("No alerts to check")
-            return
-
-        coins = list({alert['coin'] for alerts in alerts.values() for alert in alerts})
-        if not coins:
-            return
-
-        logger.info(f"Checking prices for {len(coins)} coins...")
-        
-        try:
-            response = requests.get(
-                "https://api.coingecko.com/api/v3/simple/price",
-                params={"ids": ",".join(coins), "vs_currencies": "usd"},
-                timeout=15
-            )
-            response.raise_for_status()
-            prices = response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to fetch prices for alert check: {e}")
-            return
-        except Exception as e:
-            logger.error(f"Unexpected error fetching prices: {e}")
-            return
-
-        for user_id, user_alerts in list(alerts.items()):
-            to_remove = []
-            for i, alert in enumerate(user_alerts):
-                current = prices.get(alert["coin"], {}).get("usd")
-                if current is None:
-                    continue
-                    
-                if (alert["direction"] == "above" and current >= alert["price"]) or \
-                   (alert["direction"] == "below" and current <= alert["price"]):
-                    try:
-                        await context.bot.send_message(
-                            chat_id=int(user_id),
-                            text=f"🚨 {alert['symbol'].upper()} is ${current:.5f}, hit {alert['direction']} ${alert['price']}!"
-                        )
-                        to_remove.append(i)
-                        logger.info(f"Alert triggered for user {user_id}: {alert['symbol']} {alert['direction']} {alert['price']}")
-                    except Exception as e:
-                        logger.error(f"Failed to send alert to user {user_id}: {e}")
-
-            for i in reversed(to_remove):
-                user_alerts.pop(i)
-                
-            if user_alerts:
-                alerts[user_id] = user_alerts
-            else:
-                alerts.pop(user_id)
-                
-        save_alerts(alerts)
-        
-    except Exception as e:
-        logger.error(f"Error in check_prices job: {e}")
-
-async def ping_self():
-    if not PING_URL:
-        logger.info("No PING_URL set, skipping self-pinging")
-        return
-        
-    logger.info(f"Starting self-pinging to {PING_URL} every 5 minutes")
-    while True:
-        try:
-            logger.debug(f"Pinging {PING_URL}...")
-            response = requests.get(PING_URL, timeout=10)
-            logger.info(f"Ping successful (Status: {response.status_code})")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Ping failed: {str(e)}")
-        except Exception as e:
-            logger.error(f"Unexpected ping error: {str(e)}")
-            
-        await asyncio.sleep(300)  # every 5 minutes
-
-class PingHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Pong")
-        logger.debug("Received ping request")
-
 def run_ping_server():
     def server_thread():
         port = find_available_port()
         logger.info(f"Starting ping server on port {port}")
         
-        # Update the PING_URL if it exists (for Railway/Heroku)
         global PING_URL
         if PING_URL:
-            # Handle both http:// and https:// URLs
-            if PING_URL.startswith('http://'):
-                base_url = PING_URL.replace('http://', '').split(':')[0]
-                PING_URL = f"http://{base_url}:{port}"
-            elif PING_URL.startswith('https://'):
-                base_url = PING_URL.replace('https://', '').split(':')[0]
-                PING_URL = f"https://{base_url}:{port}"
+            if PING_URL.startswith('http'):
+                base_url = PING_URL.split('://')[1].split(':')[0]
+                protocol = PING_URL.split('://')[0]
+                PING_URL = f"{protocol}://{base_url}:{port}"
             else:
                 base_url = PING_URL.split(':')[0]
                 PING_URL = f"http://{base_url}:{port}"
-            logger.info(f"Updated PING_URL to {PING_URL}")
+            logger.info(f"Updated PING_URL: {PING_URL}")
         
         server = HTTPServer(('0.0.0.0', port), PingHandler)
-        logger.info(f"Server started on port {port}")
+        logger.info("Ping server ready")
         server.serve_forever()
     
     Thread(target=server_thread, daemon=True).start()
 
+async def ping_self():
+    if not PING_URL:
+        logger.info("PING_URL not set, skipping self-pinging")
+        return
+    
+    logger.info(f"Starting self-pinging to {PING_URL}")
+    while True:
+        try:
+            requests.get(PING_URL, timeout=10)
+            logger.debug("Ping successful")
+        except Exception as e:
+            logger.warning(f"Ping failed: {e}")
+        await asyncio.sleep(300)  # 5 minutes
+
+# ===== MAIN =====
+
 async def main():
-    # Initialize persistence using PicklePersistence
+    # Initialize persistence
     persistence = PicklePersistence(filepath=PERSISTENCE_FILE)
     
-    # Create bot application with persistence (without rate limiting)
+    # Create bot application
     app = ApplicationBuilder() \
         .token(BOT_TOKEN) \
         .persistence(persistence) \
@@ -210,25 +338,21 @@ async def main():
     # Add command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("coin", coin_command))
     app.add_handler(CommandHandler("add", add_alert))
     app.add_handler(CommandHandler("list", list_alerts))
     app.add_handler(CommandHandler("remove", remove_alert))
     app.add_handler(CommandHandler("price", get_price))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
-    # Start ping server
-    run_ping_server()
-    
-    # Setup price checking job
+    # Schedule price checking job
     app.job_queue.run_repeating(check_prices, interval=15, first=5)
-    logger.info("Price check job scheduled every 15 seconds")
     
-    # Start self-pinging
+    # Start ping server and self-pinging
+    run_ping_server()
     asyncio.create_task(ping_self())
 
     # Start the bot
-    logger.info("Bot is starting...")
+    logger.info("Bot starting...")
     await app.run_polling()
 
 if __name__ == "__main__":
