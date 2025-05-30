@@ -283,11 +283,24 @@ async def main():
     print("🤖 Bot is running...")
     await app.run_polling()
 
+# if __name__ == "__main__":
+#     import asyncio
+#     try:
+#         asyncio.run(main())
+#     except RuntimeError:
+#         import nest_asyncio
+#         nest_asyncio.apply()
+#         asyncio.run(main())
 if __name__ == "__main__":
     import asyncio
+    import nest_asyncio
+
     try:
         asyncio.run(main())
-    except RuntimeError:
-        import nest_asyncio
-        nest_asyncio.apply()
-        asyncio.run(main())
+    except RuntimeError as e:
+        if "event loop is already running" in str(e):
+            nest_asyncio.apply()
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(main())
+        else:
+            raise
