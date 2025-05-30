@@ -309,6 +309,10 @@
 import json
 import os
 import requests
+import asyncio
+import nest_asyncio
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -539,15 +543,29 @@ async def check_prices(context: ContextTypes.DEFAULT_TYPE):
             alerts.pop(user_id)
     save_alerts(alerts)
 
-# ✅ Ping job
-async def ping(context: ContextTypes.DEFAULT_TYPE):
-    if not PING_URL:
-        return
-    try:
-        requests.get(PING_URL)
-        print("✅ Ping sent")
-    except Exception as e:
-        print("❌ Ping failed:", e)
+# ========== SELF-PINGING ==========
+async def ping_self():
+    while True:
+        try:
+            if PING_URL:
+                requests.get(PING_URL)
+                print("🔁 Pinged self")
+        except Exception as e:
+            print("Ping failed", e)
+        await asyncio.sleep(300)  # every 5 minutes
+
+# ========== SIMPLE SERVER ==========
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Pong")
+
+def run_ping_server():
+    def server_thread():
+        server = HTTPServer(('0.0.0.0', 10001), PingHandler)
+        server.serve_forever()
+    Thread(target=server_thread, daemon=True).start()
 
 # Unknown command
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -567,7 +585,7 @@ async def main():
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
     app.job_queue.run_repeating(check_prices, interval=15, first=5)
-    app.job_queue.run_repeating(ping, interval=300, first=10)  # Ping every 5 minutes
+    asyncio.create_task(ping_self())
 
     print("🤖 Bot is running...")
     await app.run_polling()
@@ -579,4 +597,4 @@ if __name__ == "__main__":
     except RuntimeError:
         import nest_asyncio
         nest_asyncio.apply()
-        asyncio.get_event_loop().run_until_complete(main())
+        asyncio.run(main())
